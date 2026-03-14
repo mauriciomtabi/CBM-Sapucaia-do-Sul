@@ -5,9 +5,10 @@ import { Upload, Loader2, Check, X, FileText, AlertCircle, Save, AlertTriangle, 
 import { AttendanceRecord } from '../types';
 import { calculateDuration } from '../utils/timeUtils';
 import * as pdfjs from 'pdfjs-dist';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 
 // Configuração do worker do PDF.js
-pdfjs.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.10.38/build/pdf.worker.mjs';
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 interface Props {
   providerId: string;

@@ -61,6 +61,12 @@ export interface Vehicle {
   createdAt: string;
 }
 
+export interface StationNickname {
+  id: string;
+  originalName: string;
+  nickname: string;
+}
+
 export interface FuelSupply {
   id: string;
   date: string; // ISO format YYYY-MM-DDTHH:mm

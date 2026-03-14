@@ -69,19 +69,29 @@ const Login: React.FC<Props> = ({ onLogin }) => {
     setIsLoading(true);
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: loginEmail,
-        password: loginPassword,
-      });
+      const { data, error } = await Promise.race([
+        supabase.auth.signInWithPassword({
+          email: loginEmail,
+          password: loginPassword,
+        }),
+        new Promise<{data: any, error: any}>((_, reject) => 
+          setTimeout(() => reject(new Error("Timeout de conexão com o servidor de autenticação.")), 30000)
+        )
+      ]);
 
       if (error) throw error;
 
-      // Buscar perfil na tabela profiles
-      const { data: profile, error: pError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', data.user.id)
-        .single();
+      // Buscar perfil na tabela profiles com timeout
+      const { data: profile, error: pError } = await Promise.race([
+        supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .single(),
+        new Promise<{data: any, error: any}>((_, reject) => 
+          setTimeout(() => reject(new Error("Timeout ao buscar perfil.")), 15000)
+        )
+      ]);
 
       if (pError) throw pError;
 
@@ -110,18 +120,23 @@ const Login: React.FC<Props> = ({ onLogin }) => {
 
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email: signupData.email,
-        password: signupData.password,
-        options: {
-          data: {
-            name: signupData.name,
-            war_name: signupData.warName.toUpperCase(),
-            cpf: signupData.cpf,
-            rank: finalRank
+      const { data, error } = await Promise.race([
+        supabase.auth.signUp({
+          email: signupData.email,
+          password: signupData.password,
+          options: {
+            data: {
+              name: signupData.name,
+              war_name: signupData.warName.toUpperCase(),
+              cpf: signupData.cpf,
+              rank: finalRank
+            }
           }
-        }
-      });
+        }),
+        new Promise<{data: any, error: any}>((_, reject) => 
+          setTimeout(() => reject(new Error("Timeout de conexão com o servidor de autenticação.")), 30000)
+        )
+      ]);
 
       if (error) throw error;
 

@@ -5,8 +5,9 @@ import { formatMinutesToHHMM, formatDateBR, getLatestVisit, calculateDuration, s
 import { ArrowLeft, Scan, Calendar, History, MapPin, Phone, Eye, Edit2, Trash2, X, Check, FileText, Download, Plus, Clock, LogOut, AlertCircle, Save, Upload, RefreshCw, File, ListFilter, ClipboardCheck, ShieldCheck, FileCheck, Edit3, Target, Gauge as GaugeIcon, ChevronLeft, ChevronRight, FileWarning, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import AttendanceSheetOCR from './AttendanceSheetOCR';
 import * as pdfjs from 'pdfjs-dist';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 
-pdfjs.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.10.38/build/pdf.worker.mjs';
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 interface Props {
   provider: Provider;
@@ -94,13 +95,43 @@ const ProviderDetails: React.FC<Props> = ({ provider, attendance, onBack, onUpda
   const [viewingReturnDoc, setViewingReturnDoc] = useState<string | null>(null);
   const [viewingGeneralDoc, setViewingGeneralDoc] = useState<{ title: string; data: string } | null>(null);
   
-  const handleDownload = (dataUrl: string, filename: string) => {
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleDownload = async (dataUrl: string, filename: string) => {
+    try {
+      let blob;
+      if (dataUrl.startsWith('data:')) {
+        const parts = dataUrl.split(';base64,');
+        if (parts.length !== 2) throw new Error("Invalid base64 data");
+        const contentType = parts[0].split(':')[1];
+        const raw = window.atob(parts[1]);
+        const rawLength = raw.length;
+        const uInt8Array = new Uint8Array(rawLength);
+        for (let i = 0; i < rawLength; ++i) {
+          uInt8Array[i] = raw.charCodeAt(i);
+        }
+        blob = new Blob([uInt8Array], { type: contentType });
+      } else {
+        const response = await fetch(dataUrl);
+        blob = await response.blob();
+      }
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+    } catch (err) {
+      console.error("Erro ao baixar arquivo:", err);
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = filename;
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   };
 
   const resetZoom = () => setZoomScale(1);
@@ -792,13 +823,13 @@ const ProviderDetails: React.FC<Props> = ({ provider, attendance, onBack, onUpda
 
       {viewingAttachment && (
         <div className="fixed inset-0 bg-slate-950/95 z-[3000] flex flex-col backdrop-blur-xl animate-in fade-in duration-300">
-          <div className="p-6 border-b flex justify-between items-center bg-black/20 backdrop-blur-md border-white/10">
+          <div className="p-3 md:p-6 border-b flex justify-between items-center bg-black/20 backdrop-blur-md border-white/10">
             <div className="flex flex-col">
-              <h3 className="font-black text-white uppercase tracking-tight text-base">Folha de Frequência Digitalizada</h3>
-              <p className="text-[9px] text-white/40 font-black uppercase tracking-widest">LANÇAMENTO EM: {formatDateBR(viewingAttachment.date)}</p>
+              <h3 className="font-black text-white uppercase tracking-tight text-xs md:text-base">Folha de Frequência Digitalizada</h3>
+              <p className="text-[8px] md:text-[9px] text-white/40 font-black uppercase tracking-widest">LANÇAMENTO EM: {formatDateBR(viewingAttachment.date)}</p>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center bg-white/10 rounded-2xl p-1 mr-4">
+            <div className="flex items-center gap-1 md:gap-2">
+              <div className="hidden sm:flex items-center bg-white/10 rounded-2xl p-1 mr-4">
                 <button 
                   onClick={zoomOut}
                   className="p-2 text-white hover:bg-white/10 rounded-xl transition-all"
@@ -831,14 +862,14 @@ const ProviderDetails: React.FC<Props> = ({ provider, attendance, onBack, onUpda
 
               <button 
                 onClick={() => handleDownload(viewingAttachment.attachmentData!, `frequencia_${viewingAttachment.date}.png`)}
-                className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl transition-all font-black text-[10px] uppercase tracking-widest mr-2"
+                className="flex items-center gap-2 px-3 md:px-4 py-2 md:py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl transition-all font-black text-[10px] uppercase tracking-widest"
               >
                 <Download size={18} />
-                Baixar
+                <span className="hidden sm:inline">Baixar</span>
               </button>
 
-              <button onClick={() => { setViewingAttachment(null); resetZoom(); }} className="p-2.5 bg-white/10 rounded-full text-white hover:bg-white/20">
-                <X size={20}/>
+              <button onClick={() => { setViewingAttachment(null); resetZoom(); }} className="p-2 md:p-2.5 bg-white/10 rounded-full text-white hover:bg-white/20">
+                <X size={18} className="md:w-5 md:h-5"/>
               </button>
             </div>
           </div>

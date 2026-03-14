@@ -1,33 +1,58 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { FuelSupply, AuditLog, Vehicle } from '../types';
-import { getFuelSupplies, saveFuelSupply, deleteFuelSupply, saveFuelAuditLog, saveVehicle, deleteVehicle } from '../services/supabaseService';
-import { Plus, Search, Filter, Calendar, MapPin, Fuel, User, Car, Hash, DollarSign, Eye, Trash2, X, Save, Loader2, Camera, FileText, ChevronLeft, ChevronRight, AlertCircle, CheckCircle2, History, Edit3, Clock, Download, ZoomIn, ZoomOut, RotateCcw, Upload, Image as ImageIcon } from 'lucide-react';
+import { FuelSupply, AuditLog, Vehicle, StationNickname } from '../types';
+import { getFuelSupplies, saveFuelSupply, deleteFuelSupply, saveFuelAuditLog, saveVehicle, deleteVehicle, saveStationNickname } from '../services/supabaseService';
+import { Plus, Search, Filter, Calendar, MapPin, Fuel, User, Car, Hash, DollarSign, Eye, Trash2, X, Save, Loader2, Camera, FileText, ChevronLeft, ChevronRight, AlertCircle, CheckCircle2, History, Edit3, Clock, Download, ZoomIn, ZoomOut, RotateCcw, Upload, Image as ImageIcon, Tag } from 'lucide-react';
+import { normalizeFuelType, getStationDisplayName } from '../utils/fuelUtils';
 import FuelReceiptOCR from './FuelReceiptOCR';
 
 interface Props {
   currentUser: string;
   vehicles: Vehicle[];
+  fuelSupplies: FuelSupply[];
+  stationNicknames: StationNickname[];
   onUpdateVehicles: () => void;
   setNotification: (msg: string, type: 'success' | 'error') => void;
 }
 
-const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVehicles, setNotification }) => {
+const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, fuelSupplies, stationNicknames, onUpdateVehicles, setNotification }) => {
   const [supplies, setSupplies] = useState<FuelSupply[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isVehicleModalOpen, setIsVehicleModalOpen] = useState(false);
+  const [isNicknameModalOpen, setIsNicknameModalOpen] = useState(false);
   const [isOcrOpen, setIsOcrOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [viewingAttachment, setViewingAttachment] = useState<string | null>(null);
   const [zoomScale, setZoomScale] = useState(1);
   const [saving, setSaving] = useState(false);
   const [savingVehicle, setSavingVehicle] = useState(false);
+  const [savingNickname, setSavingNickname] = useState(false);
   const [activeTab, setActiveTab] = useState<'form' | 'history'>('form');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmDeleteVehicleId, setConfirmDeleteVehicleId] = useState<string | null>(null);
+
+  const [nicknameFormData, setNicknameFormData] = useState({ originalName: '', nickname: '' });
+
+  const nicknameMap = useMemo(() => {
+    return stationNicknames.reduce((acc, curr) => {
+      acc[curr.originalName] = curr.nickname;
+      return acc;
+    }, {} as Record<string, string>);
+  }, [stationNicknames]);
+
+  const uniqueStations = useMemo(() => {
+    const stations = new Set<string>();
+    supplies.forEach(s => stations.add(s.location));
+    return Array.from(stations).sort((a, b) => {
+      const hasA = !!nicknameMap[a];
+      const hasB = !!nicknameMap[b];
+      if (hasA === hasB) return a.localeCompare(b);
+      return hasA ? 1 : -1; // Unmapped first
+    });
+  }, [supplies, nicknameMap]);
 
   const vehiclePhotoInputRef = useRef<HTMLInputElement>(null);
 
@@ -42,6 +67,23 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
   };
 
   const [vehicleFormData, setVehicleFormData] = useState<Partial<Vehicle>>(initialVehicleData);
+
+  const handleSaveNickname = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!nicknameFormData.originalName || !nicknameFormData.nickname) return;
+    setSavingNickname(true);
+    try {
+      await saveStationNickname(nicknameFormData.originalName, nicknameFormData.nickname);
+      await onUpdateVehicles(); // Re-fetch all data including nicknames
+      setNicknameFormData({ originalName: '', nickname: '' });
+      setNotification("Posto salvo com sucesso!", 'success');
+    } catch (err) {
+      console.error("Erro ao salvar posto:", err);
+      setNotification("Erro ao salvar posto.", 'error');
+    } finally {
+      setSavingNickname(false);
+    }
+  };
 
   const handleSaveVehicle = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,13 +132,43 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
     reader.readAsDataURL(file);
   };
 
-  const handleDownload = (dataUrl: string) => {
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = `nota_combustivel_${new Date().getTime()}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleDownload = async (dataUrl: string) => {
+    try {
+      let blob;
+      if (dataUrl.startsWith('data:')) {
+        const parts = dataUrl.split(';base64,');
+        if (parts.length !== 2) throw new Error("Invalid base64 data");
+        const contentType = parts[0].split(':')[1];
+        const raw = window.atob(parts[1]);
+        const rawLength = raw.length;
+        const uInt8Array = new Uint8Array(rawLength);
+        for (let i = 0; i < rawLength; ++i) {
+          uInt8Array[i] = raw.charCodeAt(i);
+        }
+        blob = new Blob([uInt8Array], { type: contentType });
+      } else {
+        const response = await fetch(dataUrl);
+        blob = await response.blob();
+      }
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `nota_combustivel_${new Date().getTime()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+    } catch (err) {
+      console.error("Erro ao baixar arquivo:", err);
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = `nota_combustivel_${new Date().getTime()}.png`;
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   };
 
   const resetZoom = () => setZoomScale(1);
@@ -127,12 +199,22 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
   const [formData, setFormData] = useState<Partial<FuelSupply>>(initialFormData);
   const [showPlateSuggestions, setShowPlateSuggestions] = useState(false);
 
+  // Helper to get a clean alphanumeric plate for comparison
+  const getCleanPlate = (p: string) => p.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+
+  // Find matching vehicle based on normalized plate
+  const matchedVehicle = useMemo(() => {
+    if (!formData.plate) return null;
+    const cleanInput = getCleanPlate(formData.plate);
+    return vehicles.find(v => getCleanPlate(v.plate) === cleanInput);
+  }, [formData.plate, vehicles]);
+
   const filteredVehiclesForSuggestions = useMemo(() => {
     if (!formData.plate) return vehicles;
-    const search = formData.plate.toLowerCase();
+    const search = getCleanPlate(formData.plate);
     return vehicles.filter(v => 
-      v.plate.toLowerCase().includes(search) || 
-      v.fleetCode.toLowerCase().includes(search)
+      getCleanPlate(v.plate).includes(search) || 
+      getCleanPlate(v.fleetCode).includes(search)
     );
   }, [vehicles, formData.plate]);
 
@@ -218,6 +300,7 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
     try {
       const supplyToSave = { 
         ...formData, 
+        fuelType: normalizeFuelType(formData.fuelType || ''),
         id: editingId || 'temp-' + Date.now() 
       } as FuelSupply;
 
@@ -238,6 +321,7 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
       
       setFormData(initialFormData);
       setEditingId(null);
+      setIsModalOpen(false);
       
       setNotification(isNew ? "Abastecimento registrado!" : "Registro atualizado!", 'success');
     } catch (err) {
@@ -267,7 +351,14 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
   };
 
   const handleOcrExtracted = (supply: FuelSupply) => {
-    setFormData(supply);
+    // Try to find a matching vehicle to use the canonical plate format
+    const cleanPlate = supply.plate.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    const matched = vehicles.find(v => v.plate.replace(/[^A-Z0-9]/gi, '').toUpperCase() === cleanPlate);
+    
+    setFormData({
+      ...supply,
+      plate: matched ? matched.plate : supply.plate
+    });
     setIsOcrOpen(false);
     setIsModalOpen(true);
     setActiveTab('form');
@@ -287,6 +378,14 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
           <p className="text-slate-500 font-medium">Controle de combustível e manutenção de frota.</p>
         </div>
         <div className="flex gap-3">
+          <button 
+            onClick={() => setIsNicknameModalOpen(true)}
+            title="Gestão de Postos"
+            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-white text-slate-600 px-4 md:px-6 py-3 rounded-2xl border border-slate-200 hover:bg-slate-50 transition-all font-black text-xs shadow-sm active:scale-95"
+          >
+            <MapPin size={18} />
+            <span className="hidden md:inline">Postos</span>
+          </button>
           <button 
             onClick={() => setIsVehicleModalOpen(true)}
             title="Gestão de Frota"
@@ -372,7 +471,7 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
                         </span>
                         <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight flex items-center gap-1 mt-1 truncate max-w-[180px]" title={s.location}>
                           <MapPin size={10} className="text-blue-500 shrink-0" />
-                          <span className="truncate">{s.location}</span>
+                          <span className="truncate">{getStationDisplayName(s.location, nicknameMap)}</span>
                         </span>
                       </div>
                     </td>
@@ -484,7 +583,7 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                       {s.date.replace('T', ' ').slice(0, 16)}
                     </span>
-                    <h4 className="text-sm font-black text-slate-800 uppercase mt-1 leading-tight">{s.location}</h4>
+                    <h4 className="text-sm font-black text-slate-800 uppercase mt-1 leading-tight">{getStationDisplayName(s.location, nicknameMap)}</h4>
                   </div>
                 </div>
                 <div className="flex flex-col items-end">
@@ -624,9 +723,9 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
                       <div className="flex flex-col md:flex-row gap-6">
                         {/* Featured Vehicle Photo */}
                         <div className="w-full md:w-48 h-48 rounded-3xl bg-slate-50 border-2 border-slate-100 overflow-hidden shrink-0 flex items-center justify-center shadow-inner group relative">
-                          {formData.plate && vehicles.find(v => v.plate === formData.plate)?.photo ? (
+                          {matchedVehicle?.photo ? (
                             <img 
-                              src={vehicles.find(v => v.plate === formData.plate)?.photo} 
+                              src={matchedVehicle.photo} 
                               alt="Veículo" 
                               className="w-full h-full object-contain p-2 transition-transform duration-500 group-hover:scale-110" 
                             />
@@ -696,10 +795,10 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
                                 </>
                               )}
 
-                              {formData.plate && vehicles.find(v => v.plate === formData.plate) && !showPlateSuggestions && (
+                              {matchedVehicle && !showPlateSuggestions && (
                                 <div className="absolute -bottom-4 left-0">
                                   <span className="text-[8px] font-black text-blue-600 uppercase tracking-widest">
-                                    Frota: {vehicles.find(v => v.plate === formData.plate)?.fleetCode || '-'}
+                                    Frota: {matchedVehicle.fleetCode || '-'}
                                   </span>
                                 </div>
                               )}
@@ -779,6 +878,95 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
           onExtracted={handleOcrExtracted}
           onCancel={() => setIsOcrOpen(false)}
         />
+      )}
+
+      {isNicknameModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 z-[2000] flex items-center justify-center p-2 md:p-4 backdrop-blur-md">
+          <div className="bg-white w-full max-w-2xl rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col max-h-[95vh] animate-in zoom-in-95 duration-300">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <h3 className="font-black text-slate-800 uppercase tracking-tight text-sm flex items-center gap-2">
+                <MapPin size={18} className="text-blue-600" />
+                Gerenciar Postos
+              </h3>
+              <button onClick={() => setIsNicknameModalOpen(false)} className="p-2.5 hover:bg-slate-200 text-slate-400 transition-colors rounded-full">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-8">
+              <form onSubmit={handleSaveNickname} className="bg-slate-50 p-6 rounded-3xl border border-slate-100 space-y-4">
+                <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-2">Cadastrar Novo Posto</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClasses}>Posto Original</label>
+                    <select 
+                      required 
+                      value={nicknameFormData.originalName} 
+                      onChange={e => setNicknameFormData({...nicknameFormData, originalName: e.target.value})}
+                      className={inputClasses}
+                    >
+                      <option value="">Selecione um posto...</option>
+                      {uniqueStations.map(station => {
+                        const hasNickname = !!nicknameMap[station];
+                        return (
+                          <option key={station} value={station}>
+                            {hasNickname ? `✅ ${station}` : `⚠️ ${station}`}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelClasses}>Nome do Posto</label>
+                    <input 
+                      type="text" 
+                      required 
+                      value={nicknameFormData.nickname} 
+                      onChange={e => setNicknameFormData({...nicknameFormData, nickname: e.target.value})}
+                      className={inputClasses}
+                      placeholder="Ex: Posto do Centro"
+                    />
+                  </div>
+                </div>
+                <button 
+                  type="submit"
+                  disabled={savingNickname}
+                  className="w-full py-3 bg-blue-600 text-white font-black uppercase text-[10px] tracking-widest rounded-xl shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all active:scale-95 flex items-center justify-center gap-2"
+                >
+                  {savingNickname ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                  Salvar Posto
+                </button>
+              </form>
+
+              <div className="space-y-4">
+                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Postos Configurados</h4>
+                <div className="grid grid-cols-1 gap-3">
+                  {stationNicknames.length === 0 ? (
+                    <div className="py-12 text-center bg-slate-50 rounded-[2rem] border border-dashed border-slate-200">
+                      <MapPin size={32} className="mx-auto text-slate-200 mb-2" />
+                      <p className="text-slate-400 font-bold italic text-xs">Nenhum posto cadastrado.</p>
+                    </div>
+                  ) : (
+                    stationNicknames.map(n => (
+                      <div key={n.id} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between group hover:border-blue-200 transition-all">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-tight">Original: {n.originalName}</span>
+                          <span className="text-sm font-black text-slate-800 uppercase mt-1">{n.nickname}</span>
+                        </div>
+                        <button 
+                          onClick={() => setNicknameFormData({ originalName: n.originalName, nickname: n.nickname })}
+                          className="p-2 text-slate-400 hover:text-blue-600 transition-colors"
+                        >
+                          <Edit3 size={16} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {isVehicleModalOpen && (
@@ -968,15 +1156,15 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
 
       {viewingAttachment && (
         <div className="fixed inset-0 bg-slate-950/95 z-[3000] flex flex-col backdrop-blur-xl animate-in fade-in duration-300">
-          <div className="p-6 flex justify-between items-center bg-black/20 backdrop-blur-md border-b border-white/10">
-            <div className="flex items-center gap-3">
-              <div className="bg-emerald-600 p-2 rounded-xl text-white">
-                <FileText size={20} />
+          <div className="p-3 md:p-6 flex justify-between items-center bg-black/20 backdrop-blur-md border-b border-white/10">
+            <div className="flex items-center gap-2 md:gap-3">
+              <div className="bg-emerald-600 p-1.5 md:p-2 rounded-xl text-white">
+                <FileText size={18} className="md:w-5 md:h-5" />
               </div>
-              <h3 className="font-black text-white uppercase tracking-tight text-sm">Nota Fiscal Digitalizada</h3>
+              <h3 className="font-black text-white uppercase tracking-tight text-xs md:text-sm hidden sm:block">Nota Fiscal Digitalizada</h3>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center bg-white/10 rounded-2xl p-1 mr-4">
+            <div className="flex items-center gap-1 md:gap-2">
+              <div className="hidden sm:flex items-center bg-white/10 rounded-2xl p-1 mr-4">
                 <button 
                   onClick={zoomOut}
                   className="p-2 text-white hover:bg-white/10 rounded-xl transition-all"
@@ -1009,14 +1197,14 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, onUpdateVeh
 
               <button 
                 onClick={() => handleDownload(viewingAttachment)}
-                className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl transition-all font-black text-[10px] uppercase tracking-widest mr-2"
+                className="flex items-center gap-2 px-3 md:px-4 py-2 md:py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl transition-all font-black text-[10px] uppercase tracking-widest"
               >
                 <Download size={18} />
-                Baixar
+                <span className="hidden sm:inline">Baixar</span>
               </button>
 
-              <button onClick={() => { setViewingAttachment(null); resetZoom(); }} className="p-2.5 bg-white/10 hover:bg-white/20 text-white transition-all rounded-full">
-                <X size={20}/>
+              <button onClick={() => { setViewingAttachment(null); resetZoom(); }} className="p-2 md:p-2.5 bg-white/10 hover:bg-white/20 text-white transition-all rounded-full">
+                <X size={18} className="md:w-5 md:h-5"/>
               </button>
             </div>
           </div>

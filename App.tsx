@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Provider, AttendanceRecord, AuditLog, Operator, FuelSupply, Vehicle } from './types';
+import { Provider, AttendanceRecord, AuditLog, Operator, FuelSupply, Vehicle, StationNickname } from './types';
 import ProviderList from './components/ProviderList';
 import ProviderDetails from './components/ProviderDetails';
 import Dashboard from './components/Dashboard';
@@ -11,7 +11,7 @@ import Login from './components/Login';
 import InstallGuide from './components/InstallGuide';
 import FuelSupplyManager from './components/FuelSupplyManager';
 import { Users, LayoutDashboard, FileText, Loader2, ShieldCheck, ShieldAlert, Cpu, Database, Network, Sparkles, LogOut, UserCircle, CheckCircle2, X, Smartphone, Fuel } from 'lucide-react';
-import { getProviders, getAttendance, createProvider, updateProvider, saveAttendance, deleteAttendance, saveAuditLog, supabase, getFuelSupplies, getVehicles } from './services/supabaseService';
+import { getProviders, getAttendance, createProvider, updateProvider, saveAttendance, deleteAttendance, saveAuditLog, supabase, getFuelSupplies, getVehicles, getStationNicknames } from './services/supabaseService';
 
 const Toast: React.FC<{ message: string; type: 'success' | 'error'; onClose: () => void }> = ({ message, type, onClose }) => {
   useEffect(() => {
@@ -48,6 +48,7 @@ const App: React.FC = () => {
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [fuelSupplies, setFuelSupplies] = useState<FuelSupply[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [stationNicknames, setStationNicknames] = useState<StationNickname[]>([]);
 
   const bootMessages = [
     "Autenticando credenciais militares...",
@@ -61,6 +62,51 @@ const App: React.FC = () => {
 
   useEffect(() => {
     checkUserAndFetch();
+
+    // Safety fallback: force boot to finish after 35 seconds if it hangs
+    const fallbackTimer = setTimeout(() => {
+      setIsBooting(false);
+    }, 35000);
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setCurrentUser(null);
+        setProviders([]);
+        setAttendance([]);
+        setFuelSupplies([]);
+        setVehicles([]);
+        setView('dashboard');
+      } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        if (session) {
+          try {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', session.user.id)
+              .single();
+
+            const meta = session.user.user_metadata;
+            const operator: Operator = {
+              name: profile?.name || meta?.name || "Operador",
+              warName: profile?.war_name || meta?.war_name || "MILITAR",
+              cpf: profile?.cpf || meta?.cpf || "000.000.000-00",
+              email: profile?.email || session.user.email || "",
+              rank: profile?.rank || meta?.rank || "Soldado",
+              profilePhoto: profile?.profile_photo
+            };
+            setCurrentUser(operator);
+            await fetchData();
+          } catch (err) {
+            console.error("Erro ao atualizar sessão:", err);
+          }
+        }
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(fallbackTimer);
+    };
   }, []);
 
   const checkUserAndFetch = async () => {
@@ -74,7 +120,12 @@ const App: React.FC = () => {
     }, 150);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      // Obter sessão diretamente sem Promise.race para evitar locks pendentes
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError) {
+        console.warn("Aviso ao obter sessão:", sessionError);
+      }
       
       if (session) {
         const { data: profile } = await supabase
@@ -83,8 +134,6 @@ const App: React.FC = () => {
           .eq('id', session.user.id)
           .single();
 
-        // Lógica de Sincronização: Se o perfil existe mas colunas críticas estão nulas,
-        // tenta preencher com o que está no metadado do usuário na sessão.
         const meta = session.user.user_metadata;
         
         const operator: Operator = {
@@ -97,7 +146,8 @@ const App: React.FC = () => {
         };
 
         setCurrentUser(operator);
-        await fetchData();
+        
+        await fetchData().catch(err => console.warn("Aviso ao buscar dados:", err));
       }
       
       setBootProgress(100);
@@ -116,16 +166,18 @@ const App: React.FC = () => {
   const fetchData = async () => {
     try {
       setConnectionError(false);
-      const [pData, aData, fData, vData] = await Promise.all([
+      const [pData, aData, fData, vData, nData] = await Promise.all([
         getProviders(), 
         getAttendance(), 
         getFuelSupplies(),
-        getVehicles()
+        getVehicles(),
+        getStationNicknames()
       ]);
       setProviders(pData);
       setAttendance(aData);
       setFuelSupplies(fData);
       setVehicles(vData);
+      setStationNicknames(nData);
     } catch (err) {
       console.error("Erro ao atualizar dados:", err);
       setConnectionError(true);
@@ -138,7 +190,14 @@ const App: React.FC = () => {
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    try {
+      await Promise.race([
+        supabase.auth.signOut(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao sair.")), 3000))
+      ]);
+    } catch (e) {
+      console.error("Erro ao fazer logout:", e);
+    }
     setCurrentUser(null);
     setProviders([]);
     setAttendance([]);
@@ -352,6 +411,7 @@ const App: React.FC = () => {
             attendance={attendance} 
             fuelSupplies={fuelSupplies} 
             vehicles={vehicles} 
+            stationNicknames={stationNicknames}
             onNavigateProvider={(p) => {
               setSelectedProviderId(p.id);
               setView('details');
@@ -387,6 +447,8 @@ const App: React.FC = () => {
           <FuelSupplyManager 
             currentUser={currentUser.warName || 'Operador'}
             vehicles={vehicles}
+            fuelSupplies={fuelSupplies}
+            stationNicknames={stationNicknames}
             onUpdateVehicles={fetchData}
             setNotification={(msg: string, type: 'success' | 'error') => setNotification({ message: msg, type })}
           />

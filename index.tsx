@@ -15,13 +15,12 @@ root.render(
   </React.StrictMode>
 );
 
-// Registro do Service Worker para PWA
+// Remover Service Workers antigos que podem estar causando problemas
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then(registration => {
-      console.log('SW registrado com sucesso:', registration.scope);
-    }).catch(error => {
-      console.log('Falha ao registrar SW:', error);
-    });
+  navigator.serviceWorker.getRegistrations().then(function(registrations) {
+    for(let registration of registrations) {
+      registration.unregister();
+      console.log('Service Worker desregistrado para evitar conflitos.');
+    }
   });
 }

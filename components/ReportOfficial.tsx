@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { Provider, AttendanceRecord, MonthlySummary } from '../types';
 import { formatMinutesToHHMM, formatDateBR, getLatestVisit } from '../utils/timeUtils';
-import { FileDown, Filter, Calendar as CalendarIcon, Loader2 } from 'lucide-react';
+import { FileDown, Filter, Calendar as CalendarIcon, Loader2, AlertCircle } from 'lucide-react';
 // @ts-ignore
 import html2pdf from 'html2pdf.js';
 
@@ -145,6 +145,12 @@ const ReportOfficial: React.FC<Props> = ({ providers, attendance }) => {
           </button>
         </div>
 
+        {/* Aviso de Scroll no Mobile */}
+        <div className="md:hidden flex items-center gap-2 bg-amber-50 border border-amber-100 p-3 rounded-2xl text-amber-700 animate-pulse">
+          <AlertCircle size={16} />
+          <span className="text-[10px] font-black uppercase tracking-wider">Dica: Deslize o relatório para o lado para ver tudo</span>
+        </div>
+
         <div className="bg-white p-4 rounded-[2rem] shadow-sm border border-slate-200">
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-2 bg-slate-50 px-5 py-3 rounded-2xl border border-slate-100 flex-1 md:flex-none">
@@ -189,9 +195,10 @@ const ReportOfficial: React.FC<Props> = ({ providers, attendance }) => {
       </div>
 
       {/* Papel A4 Oficial - Container para o PDF */}
-      <div id="official-document-content" className="max-w-[21cm] mx-auto bg-white p-[2cm] text-black shadow-lg animate-in zoom-in-95 duration-700 overflow-hidden" style={{ fontFamily: '"Times New Roman", Times, serif', fontSize: '12pt', lineHeight: '1.5' }}>
-        
-        {/* Brasão e Cabeçalho */}
+      <div className="w-full overflow-x-auto pb-12 md:pb-0 md:overflow-visible">
+        <div id="official-document-content" className="min-w-[21cm] max-w-[21cm] mx-auto bg-white p-[1cm] md:p-[2cm] text-black shadow-2xl md:shadow-lg animate-in zoom-in-95 duration-700" style={{ fontFamily: '"Times New Roman", Times, serif', fontSize: '12pt', lineHeight: '1.5' }}>
+          
+          {/* Brasão e Cabeçalho */}
         <div className="text-center mb-10 flex flex-col items-center">
           <img 
             src="https://i.postimg.cc/MZM3gq2k/image.png" 
@@ -305,7 +312,8 @@ const ReportOfficial: React.FC<Props> = ({ providers, attendance }) => {
         </div>
       </div>
     </div>
-  );
+  </div>
+);
 };
 
 export default ReportOfficial;

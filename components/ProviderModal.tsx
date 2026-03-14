@@ -5,8 +5,9 @@ import { Provider } from '../types';
 import { extractReferralData, detectFaceInDocument } from '../services/geminiService';
 import { sanitizeObservations } from '../utils/timeUtils';
 import * as pdfjs from 'pdfjs-dist';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 
-pdfjs.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.10.38/build/pdf.worker.mjs';
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 interface Props {
   provider?: Provider;

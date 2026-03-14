@@ -33,7 +33,11 @@ const FuelReceiptOCR: React.FC<Props> = ({ onExtracted, onCancel }) => {
     setError(null);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (globalThis as any).process?.env?.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("API Key do Gemini não configurada.");
+      }
+      const ai = new GoogleGenAI({ apiKey });
       
       const prompt = `Analise esta nota fiscal de abastecimento e extraia os seguintes dados em formato JSON. 
       IMPORTANTE: Extraia a data e hora EXATAMENTE como constam na nota.

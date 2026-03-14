@@ -1,7 +1,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
 // Initialize the GoogleGenAI client using the API key from environment variables.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY || (globalThis as any).process?.env?.GEMINI_API_KEY;
+if (!apiKey) {
+  console.error("GEMINI_API_KEY is not defined in the environment.");
+}
+const ai = new GoogleGenAI({ apiKey: apiKey || '' });
 
 export const detectFaceInDocument = async (base64Data: string, mimeType: string) => {
   const prompt = `

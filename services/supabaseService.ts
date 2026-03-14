@@ -1,15 +1,35 @@
 
 import { createClient } from '@supabase/supabase-js';
-import { Provider, AttendanceRecord, AuditLog, FuelSupply, Vehicle } from '../types';
+import { Provider, AttendanceRecord, AuditLog, FuelSupply, Vehicle, StationNickname } from '../types';
 
 const SUPABASE_URL = 'https://gsdweukrawfmgqprngyl.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_EQ77FYiIig_H3_HQXnwU9w_aE2dtnvW';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzZHdldWtyYXdmbWdxcHJuZ3lsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk4NjE2OTUsImV4cCI6MjA4NTQzNzY5NX0.dTdM1Jyhu0G0skkuBH2flsgnKXbmFtLYTh3wj0TDRiQ';
 
-if (!SUPABASE_KEY.startsWith('eyJ')) {
-  console.warn("AVISO: A SUPABASE_KEY não parece ser uma chave 'anon' válida (deve começar com 'eyJ'). Verifique as configurações no Supabase Dashboard.");
+if (!SUPABASE_KEY.startsWith('eyJ') && !SUPABASE_KEY.startsWith('sb_')) {
+  console.warn("AVISO: A SUPABASE_KEY não parece ser uma chave 'anon' válida. Verifique as configurações no Supabase Dashboard.");
 }
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const customStorage = {
+  getItem: (key: string) => {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  },
+  setItem: (key: string, value: string) => {
+    try { localStorage.setItem(key, value); } catch (e) {}
+  },
+  removeItem: (key: string) => {
+    try { localStorage.removeItem(key); } catch (e) {}
+  }
+};
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storage: customStorage,
+    storageKey: 'supabase.auth.token.gestao-cbm-v2' // Nova chave para ignorar locks antigos
+  }
+});
 
 // Helper para converter Base64 em Blob para upload no Storage
 const base64ToBlob = (base64: string) => {
@@ -468,6 +488,50 @@ export const deleteVehicle = async (id: string) => {
     }
   } catch (err: any) {
     console.error("Erro ao excluir veículo:", err);
+    throw err;
+  }
+};
+
+// --- Funções de Postos ---
+export const getStationNicknames = async () => {
+  try {
+    const { data, error } = await supabase
+      .from('station_nicknames')
+      .select('*');
+      
+    if (error) {
+      if (error.code === 'PGRST205') return [];
+      throw error;
+    }
+    return (data || []).map(n => ({
+      id: n.id,
+      originalName: n.original_name,
+      nickname: n.nickname
+    })) as StationNickname[];
+  } catch (err) {
+    console.error("Erro ao buscar postos:", err);
+    return [];
+  }
+};
+
+export const saveStationNickname = async (originalName: string, nickname: string) => {
+  try {
+    // Aqui garantimos que o banco receba 'original_name' 
+    // e não 'originalName'
+    const { error } = await supabase
+      .from('station_nicknames')
+      .upsert(
+        { 
+          original_name: originalName, 
+          nickname: nickname 
+        },
+        { onConflict: 'original_name' }
+      );
+
+    if (error) throw error;
+    console.log("Salvo com sucesso!");
+  } catch (err) {
+    console.error("Erro ao salvar posto:", err);
     throw err;
   }
 };
