@@ -357,7 +357,7 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, fuelSupplie
     
     setFormData({
       ...supply,
-      plate: matched ? matched.plate : supply.plate
+      plate: matched ? matched.plate : normalizePlate(supply.plate)
     });
     setIsOcrOpen(false);
     setIsModalOpen(true);
@@ -806,7 +806,14 @@ const FuelSupplyManager: React.FC<Props> = ({ currentUser, vehicles, fuelSupplie
                           </div>
                           <div>
                             <label className={labelClasses}>KM Atual</label>
-                            <input type="number" required value={formData.km} onChange={e => setFormData({...formData, km: parseInt(e.target.value)})} className={inputClasses} />
+                            <input 
+                              type="number" 
+                              required 
+                              value={formData.km === 0 ? '' : (formData.km ?? '')} 
+                              onChange={e => setFormData({...formData, km: e.target.value === '' ? 0 : parseInt(e.target.value) || 0})} 
+                              className={inputClasses} 
+                              placeholder="0"
+                            />
                           </div>
                           <div>
                             <label className={labelClasses}>Atendente</label>

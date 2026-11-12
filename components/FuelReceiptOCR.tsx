@@ -15,13 +15,46 @@ const FuelReceiptOCR: React.FC<Props> = ({ onExtracted, onCancel }) => {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const optimizeImage = (base64Str: string, maxDim = 2048, quality = 0.85): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64Str;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(base64Str);
+    });
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onloadend = () => {
-      setPreview(reader.result as string);
+    reader.onloadend = async () => {
+      const rawBase64 = reader.result as string;
+      try {
+        const optimized = await optimizeImage(rawBase64);
+        setPreview(optimized);
+      } catch {
+        setPreview(rawBase64);
+      }
       setError(null);
     };
     reader.readAsDataURL(file);
@@ -39,27 +72,38 @@ const FuelReceiptOCR: React.FC<Props> = ({ onExtracted, onCancel }) => {
       }
       const ai = new GoogleGenAI({ apiKey });
       
-      const prompt = `Analise esta nota fiscal de abastecimento e extraia os seguintes dados em formato JSON. 
-      IMPORTANTE: Extraia a data e hora EXATAMENTE como constam na nota.
-      
-      - data: Data e hora do abastecimento (formato ISO local YYYY-MM-DDTHH:mm, ignore fuso horário)
-      - local: Nome do posto ou estabelecimento
-      - cnpj: CNPJ do estabelecimento
-      - fuelType: Tipo de combustível (ex: Gasolina Comum, Diesel S10)
-      - liters: Quantidade de litros (número)
-      - pricePerLiter: Preço por litro (número)
-      - totalValue: Valor total pago (número)
-      - driver: Nome do motorista (se disponível)
-      - plate: Placa do veículo. REGRAS CRÍTICAS PARA PLACA:
-        1. O formato brasileiro é 3 LETRAS seguidas de 4 NÚMEROS (ABC1234) ou o padrão Mercosul (ABC1D23).
-        2. Os 3 PRIMEIROS caracteres são SEMPRE LETRAS. Nunca confunda '0' com 'O' ou '1' com 'I' nestas posições.
-        3. No padrão Mercosul, o 5º caractere é SEMPRE uma LETRA.
-        4. Verifique cuidadosamente se o que parece um '0' (zero) não é na verdade a letra 'O' nas posições de letras, e vice-versa.
-      - km: Quilometragem do veículo (número, se disponível)
-      - attendant: Nome do atendente (se disponível)
-      - protocol: Número do protocolo ou da nota fiscal (se disponível)
-      
-      Se algum dado não for encontrado, deixe como string vazia ou zero para números.`;
+      const prompt = `Analise detalhadamente esta nota fiscal de abastecimento (NFC-e / SAT / Cupom Fiscal) e extraia os dados em formato JSON.
+
+IMPORTANTE - DIRETRIZES CRÍTICAS:
+1. Extraia a data e hora EXATAMENTE como constam na nota.
+2. ATENÇÃO MÁXIMA PARA PLACA E KM:
+   - Em postos de combustível, a PLACA e o KM raramente estão no topo; costumam estar em:
+     * Campo 'INFORMAÇÕES COMPLEMENTARES', 'DADOS ADICIONAIS', 'OBSERVAÇÕES DO CONTRIBUINTE' ou 'MENSAGEM DE INTERESSE DO CONTRIBUINTE' (geralmente no rodapé do cupom, em letras pequenas).
+     * ANOTADOS À MÃO (MANUSCRITOS) no cupom pelo motorista ou frentista (à caneta, carimbo ou rasurado).
+   - Verifique cuidadosamente o documento inteiro de ponta a ponta para localizá-los!
+
+CAMPOS A EXTRAIR:
+- data: Data e hora do abastecimento (formato ISO local YYYY-MM-DDTHH:mm, ignore fuso horário)
+- local: Nome fantasia ou razão social do posto ou estabelecimento
+- cnpj: CNPJ do estabelecimento
+- fuelType: Tipo de combustível (ex: Gasolina Comum, Gasolina Aditivada, Diesel S10, Diesel S500, Etanol)
+- liters: Quantidade de litros abastecidos (número decimal)
+- pricePerLiter: Preço por litro (número decimal)
+- totalValue: Valor total pago em R$ (número decimal)
+- driver: Nome do motorista (se disponível)
+- plate: Placa do veículo.
+  * Procure por prefixos como 'PLACA:', 'PL:', 'VEIC:', 'VEICULO:', 'VTR:', ou anotações à caneta.
+  * Formatos brasileiros válidos: padrão antigo (ABC1234 ou ABC-1234) ou padrão Mercosul (ABC1D23).
+  * Retorne a placa limpa (ex: 'ABC1234' ou 'ABC1D23' ou 'ABC-1234').
+- km: Quilometragem atual / Odômetro do veículo (número inteiro).
+  * Procure por 'KM', 'KM:', 'KM ATUAL', 'HODOMETRO', 'HOD:', 'ODOMETRO', ou anotações manuais como 'KM 124.500'.
+  * REGRA CRÍTICA DE PONTUAÇÃO DO KM: Se constar com ponto separador de milhar (ex: '124.500' ou '85.200 km'), remova os pontos e retorne como NÚMERO INTEIRO (ex: 124500 ou 85200). NUNCA retorne com ponto decimal de milhar.
+- attendant: Nome do atendente ou frentista (se disponível)
+- protocol: Número do protocolo, número da nota fiscal ou NFC-e (se disponível)
+
+Se algum dado não for encontrado, deixe como string vazia ou zero para números.`;
+
+      const mimeType = preview.match(/^data:(image\/[a-zA-Z+]+);base64,/)?.[1] || "image/jpeg";
 
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
@@ -69,7 +113,7 @@ const FuelReceiptOCR: React.FC<Props> = ({ onExtracted, onCancel }) => {
               { text: prompt },
               {
                 inlineData: {
-                  mimeType: "image/jpeg",
+                  mimeType: mimeType,
                   data: preview.split(',')[1]
                 }
               }
@@ -105,6 +149,26 @@ const FuelReceiptOCR: React.FC<Props> = ({ onExtracted, onCancel }) => {
         return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
       };
 
+      // Sanitizar placa
+      let extractedPlate = (result.plate || '').trim().toUpperCase();
+      extractedPlate = extractedPlate.replace(/^(PLACA|PL|VTR|VEICULO|VEIC)[:\s-]*/i, '').trim();
+
+      // Sanitizar KM
+      let parsedKm = 0;
+      if (result.km) {
+        let val = Number(result.km);
+        // Se por ventura veio com casas decimais (ex: 124.500 virou 124.5 no JSON)
+        if (!Number.isInteger(val) && val > 0 && val < 1000) {
+          const str = String(result.km);
+          const parts = str.split('.');
+          if (parts[1]) {
+            const paddedDecimals = parts[1].padEnd(3, '0');
+            val = parseInt(parts[0] + paddedDecimals, 10);
+          }
+        }
+        parsedKm = Math.round(val) || 0;
+      }
+
       const supply: FuelSupply = {
         id: 'temp-' + Date.now(),
         date: result.data || getLocalISOString(new Date()),
@@ -115,12 +179,12 @@ const FuelReceiptOCR: React.FC<Props> = ({ onExtracted, onCancel }) => {
         pricePerLiter: result.pricePerLiter || 0,
         totalValue: result.totalValue || 0,
         driver: result.driver || '',
-        plate: result.plate || '',
-        km: result.km || 0,
+        plate: extractedPlate,
+        km: parsedKm,
         attendant: result.attendant || '',
         protocol: result.protocol || '',
         attachmentData: preview,
-        attachmentType: 'image/jpeg',
+        attachmentType: mimeType,
         createdAt: new Date().toISOString()
       };
 
